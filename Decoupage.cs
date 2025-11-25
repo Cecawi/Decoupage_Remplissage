@@ -1,13 +1,41 @@
-/*
+//////////LCA!!!!!
 
-*/
+using System.Collections.Generic;
+
+public class Point
+{
+    public float x, y, z;
+    
+    public Point(float x, float y, float z = 0)
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+}
 
 public class Decoupage
 {
-    //PF
-
-    //VI
-    int i, j, N2
+    //PW : liste des N3 sommets de la fenêtre (window)
+    private List<Point> PW;
+    
+    //PL : liste des N1 sommets du polygone à découper
+    private List<Point> PL;
+    
+    //PS : liste de points du polygone de sortie (PL découpé)
+    private List<Point> PS;
+    
+    //variables
+    private Point S,F,I;//point précédent, fenetre?/polynome?, d'intersection
+    private int N1;//nombre de points du polygone d'entrée (sommets)
+    private int N2;//nombre de points du polygone de sortie
+    
+    public Decoupage(List<Point> fenetre, List<Point> polygone)
+    {
+        this.PW = fenetre;
+        this.PL = new List<Point>(polygone);
+        this.PS = new List<Point>();
+    }
 }
 
 bool Coupe(Point S, Point Pj, Point Fi, Point FiPlusUn)
