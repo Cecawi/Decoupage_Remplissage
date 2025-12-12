@@ -68,26 +68,26 @@ public class FenetrageManager : MonoBehaviour
 
     private void Update()
     {
-        GérerChangementMode();
-        GérerSaisiePoints();
-        GérerValidationEtDecoupage();
+        GererChangementMode();
+        GererSaisiePoints();
+        GererValidationEtDecoupage();
         MettreAJourLineRenderers();
     }
 
-    private void GérerChangementMode()
+    private void GererChangementMode()
     {
         if(Input.GetKeyDown(KeyCode.P))
         {
             saisiePolygone = true;
         }
 
-        if(Input.GetKeyDown(KeyCode.W))
+        if(Input.GetKeyDown(KeyCode.F))
         {
             saisiePolygone = false;
         }
     }
 
-    private void GérerSaisiePoints()
+    private void GererSaisiePoints()
     {
         if(Input.GetMouseButtonDown(0))
         {
@@ -108,15 +108,15 @@ public class FenetrageManager : MonoBehaviour
         }
     }
 
-    private void GérerValidationEtDecoupage()
+    private void GererValidationEtDecoupage()
     {
         if(Input.GetKeyDown(KeyCode.Return))
         {
-            if(saisiePolygone)
+            if(saisiePolygone && pointsPolygone.Count >= 3)
             {
                 polygoneFerme = true;
             }
-            else
+            else if(!saisiePolygone && pointsFenetre.Count >= 3)
             {
                 fenetreFermee = true;
             }
