@@ -51,9 +51,9 @@ public class FenetrageManager : MonoBehaviour
             lrDecoupe = goDecoupe.AddComponent<LineRenderer>();
         }
 
+        ConfigurerLineRenderer(lrDecoupe, Color.red);
         ConfigurerLineRenderer(lrPolygone, Color.green);
         ConfigurerLineRenderer(lrFenetre, Color.blue);
-        ConfigurerLineRenderer(lrDecoupe, Color.red);
     }
 
     private void ConfigurerLineRenderer(LineRenderer lr, Color couleur)
