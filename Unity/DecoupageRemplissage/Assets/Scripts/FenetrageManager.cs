@@ -16,10 +16,10 @@ public class FenetrageManager : MonoBehaviour
     public Camera cameraScene;
     private UIManager uiManager;
 
-    public List<Polygone> listePolygones;
+    public List<Polygone> listePolygones = new List<Polygone>();
     private Polygone polygoneCourant;
     
-    public List<Fenetre> listeFenetres;
+    public List<Fenetre> listeFenetres = new List<Fenetre>();
     private Fenetre fenetreCourante;
 
     public ModeApplication modeActuel = ModeApplication.SaisiePolygone;
@@ -244,6 +244,9 @@ public class FenetrageManager : MonoBehaviour
         return best;
     }
 
+    public bool gestionConcavite = false;
+    public bool afficherTriangulation = false;
+
     public void RecalculerDecoupage()
     {
         //si aucune fenetre valide, pas de découpage
@@ -253,13 +256,18 @@ public class FenetrageManager : MonoBehaviour
             if (fen.estFermee && fen.sommets.Count >= 3)
             {
                 aucuneFenetreValide = false;
+                // Calcul concavité toujours nécessaire pour savoir si on affiche le bouton UI ou pas
+                fen.CheckConcavite(); 
                 break;
             }
         }
 
+        // On recalcul concavité pour toutes
+        foreach(Fenetre fen in listeFenetres) if(fen.estFermee) fen.CheckConcavite();
+
         if (aucuneFenetreValide)
         {
-            foreach (Polygone poly in listePolygones) poly.sommetsDecoupes.Clear();
+            foreach (Polygone poly in listePolygones) poly.resultatsDecoupes.Clear();
             return;
         }
 
@@ -267,40 +275,108 @@ public class FenetrageManager : MonoBehaviour
         {
             if (poly.estFerme && poly.sommets.Count >= 3)
             {
-                //commencer avec les sommets du polygone
-                List<Point> currentPoints = new List<Point>(poly.sommets);
+                List<List<Point>> morceauxCourants = new List<List<Point>>();
+                morceauxCourants.Add(new List<Point>(poly.sommets));
 
-                //appliquer chaque fenetre séquentiellement
                 foreach (Fenetre fen in listeFenetres)
                 {
                     if (fen.estFermee && fen.sommets.Count >= 3)
                     {
-                        if (currentPoints.Count < 3) break; //plus rien à découper
+                        if (morceauxCourants.Count == 0) break;
 
-                        DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(fen.sommets, currentPoints);
-                        currentPoints = decoupage.Decouper();
+                        List<List<Point>> nouveauxMorceaux = new List<List<Point>>();
+
+                        // LOGIQUE PRINCIPALE : CONVEXE vs CONCAVE
+                        if (!gestionConcavite)
+                        {
+                            // Mode SIMPLE (Sutherland-Hodgman standard sur la fenêtre entière)
+                            foreach(List<Point> morceau in morceauxCourants)
+                            {
+                                DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(fen.sommets, morceau);
+                                List<Point> resultat = decoupage.Decouper();
+                                if (resultat.Count >= 3) nouveauxMorceaux.Add(resultat);
+                            }
+                        }
+                        else
+                        {
+                            // Mode AVANCÉ (Triangulation)
+                            List<List<Point>> trianglesFenetre = fen.trianglesCache;
+                            if(trianglesFenetre == null || trianglesFenetre.Count == 0) 
+                            {
+                                // Fallback si triangulation vide (bizarre mais safety)
+                                trianglesFenetre = new List<List<Point>> { fen.sommets };
+                            }
+
+                            foreach(List<Point> morceau in morceauxCourants)
+                            {
+                                foreach(List<Point> triangle in trianglesFenetre)
+                                {
+                                    DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(triangle, morceau);
+                                    List<Point> resultat = decoupage.Decouper();
+                                    if (resultat.Count >= 3) nouveauxMorceaux.Add(resultat);
+                                }
+                            }
+                        }
+                        
+                        morceauxCourants = nouveauxMorceaux;
                     }
                 }
-                poly.sommetsDecoupes = currentPoints;
+
+                // ETAPE FINALE DE FUSION : On recolle les morceaux adjacents pour supprimer les traits internes
+                if (gestionConcavite && morceauxCourants.Count > 1)
+                {
+                    morceauxCourants = FusionnerMorceaux(morceauxCourants);
+                }
+
+                poly.resultatsDecoupes = morceauxCourants;
             }
             else
             {
-                poly.sommetsDecoupes.Clear();
+                poly.resultatsDecoupes.Clear();
             }
         }
     }
 
     private void MettreAJourRenderers()
     {
-        foreach (Polygone poly in listePolygones)
+        if (listePolygones != null)
         {
-            poly.MettreAJourRenderers();
+            foreach (Polygone poly in listePolygones)
+            {
+                poly.MettreAJourRenderers();
+            }
         }
 
-        foreach (Fenetre fen in listeFenetres)
+        if (listeFenetres != null)
         {
-            fen.MettreAJourRenderer();
+            foreach (Fenetre fen in listeFenetres)
+            {
+                // On affiche la triangulation SEULEMENT si mode concave actif ET option affichage active
+                fen.MettreAJourRenderer(gestionConcavite && afficherTriangulation);
+            }
         }
+    }
+
+    public bool ExisteFenetreConcave()
+    {
+        foreach(Fenetre fen in listeFenetres)
+        {
+            if(fen.estFermee && fen.EstConcave()) return true;
+        }
+        return false;
+    }
+
+    public void ToggleGestionConcavite()
+    {
+        gestionConcavite = !gestionConcavite;
+        // Si on désactive la concavité, on cache forcément la triangulation
+        if(!gestionConcavite) afficherTriangulation = false; 
+        RecalculerDecoupage();
+    }
+
+    public void ToggleAfficherTriangulation()
+    {
+        afficherTriangulation = !afficherTriangulation;
     }
 
 
@@ -405,5 +481,135 @@ public class FenetrageManager : MonoBehaviour
     private bool IsMouseOverUI()
     {
         return uiManager != null && uiManager.IsMouseOverUI();
+    }
+
+    // =========================================================================================
+    // FUSION DES POLYGONES (Suppression des arêtes internes)
+    // =========================================================================================
+
+    private List<List<Point>> FusionnerMorceaux(List<List<Point>> morceaux)
+    {
+        // 1. Extraire toutes les arêtes orientées
+        List<AreteOriente> toutesAretes = new List<AreteOriente>();
+        foreach (List<Point> poly in morceaux)
+        {
+            for (int i = 0; i < poly.Count; i++)
+            {
+                Point A = poly[i];
+                Point B = poly[(i + 1) % poly.Count];
+                toutesAretes.Add(new AreteOriente(A, B));
+            }
+        }
+
+        // 2. Identifier et marquer les arêtes "jumelles" (A->B et B->A)
+        // O(N^2) naïf, acceptable pour ce projet interactif
+        List<AreteOriente> aretesFinales = new List<AreteOriente>();
+        bool[] ignoreIndices = new bool[toutesAretes.Count];
+
+        for (int i = 0; i < toutesAretes.Count; i++)
+        {
+            if (ignoreIndices[i]) continue;
+
+            bool paired = false;
+            for (int j = i + 1; j < toutesAretes.Count; j++)
+            {
+                if (ignoreIndices[j]) continue;
+
+                if (SontJumelles(toutesAretes[i], toutesAretes[j]))
+                {
+                    ignoreIndices[i] = true;
+                    ignoreIndices[j] = true;
+                    paired = true;
+                    break;
+                }
+            }
+
+            if (!paired)
+            {
+                aretesFinales.Add(toutesAretes[i]);
+            }
+        }
+
+        // Si tout s'est annulé (impossible normalement), retour vide
+        if (aretesFinales.Count == 0) return new List<List<Point>>();
+
+        // 3. Reconstruire les boucles (Polygones disjoints ou unique)
+        List<List<Point>> resultatsFusionnes = new List<List<Point>>();
+        bool[] areteUtilisee = new bool[aretesFinales.Count];
+
+        for (int i = 0; i < aretesFinales.Count; i++)
+        {
+            if (areteUtilisee[i]) continue;
+
+            List<Point> nouveauPoly = new List<Point>();
+            AreteOriente current = aretesFinales[i];
+            
+            nouveauPoly.Add(current.start);
+            areteUtilisee[i] = true;
+            
+            bool boucleFermee = false;
+            int watchdog = 0;
+            int maxWatchdog = aretesFinales.Count * 2; // Protection boucle infinie
+
+            while (!boucleFermee && watchdog < maxWatchdog)
+            {
+                watchdog++;
+                Point chercheDepart = current.end;
+                
+                // Chercher l'arête suivante qui commence par chercheDepart
+                bool foundNext = false;
+                for (int j = 0; j < aretesFinales.Count; j++)
+                {
+                    if (!areteUtilisee[j] && PointsEgaux(aretesFinales[j].start, chercheDepart))
+                    {
+                        current = aretesFinales[j];
+                        areteUtilisee[j] = true;
+                        
+                        // Si on revient au point de départ du polygone
+                        if (PointsEgaux(current.end, nouveauPoly[0]))
+                        {
+                            nouveauPoly.Add(current.start); // Ajoute le dernier point (fermeture implicite ou explicite selon usage)
+                            boucleFermee = true;
+                        }
+                        else
+                        {
+                            nouveauPoly.Add(current.start);
+                        }
+                        foundNext = true;
+                        break;
+                    }
+                }
+
+                if (!foundNext)
+                {
+                    // Peut arriver si géométrie dégénérée, on abandonne ce fragment
+                    break; 
+                }
+            }
+
+            if (boucleFermee && nouveauPoly.Count >= 3)
+            {
+                resultatsFusionnes.Add(nouveauPoly);
+            }
+        }
+
+        return resultatsFusionnes;
+    }
+
+    private bool SontJumelles(AreteOriente a1, AreteOriente a2)
+    {
+        return PointsEgaux(a1.start, a2.end) && PointsEgaux(a1.end, a2.start);
+    }
+
+    private bool PointsEgaux(Point p1, Point p2)
+    {
+        return Vector3.Distance(p1.VersVector3(), p2.VersVector3()) < 0.001f; // epsilon pour floats
+    }
+
+    private class AreteOriente
+    {
+        public Point start;
+        public Point end;
+        public AreteOriente(Point s, Point e) { start = s; end = e; }
     }
 }

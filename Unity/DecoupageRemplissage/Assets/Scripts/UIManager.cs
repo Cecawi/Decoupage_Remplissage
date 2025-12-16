@@ -107,6 +107,26 @@ public class UIManager : MonoBehaviour
         }
 
         GUILayout.Space(10);
+        GUILayout.Label("Options Avancées : ");
+        
+        // Bouton Toggle Concavité
+        string txtConcavite = manager.gestionConcavite ? "Ne plus traiter cas concaves" : "Traiter cas concaves";
+        if (GUILayout.Button(txtConcavite))
+        {
+            manager.ToggleGestionConcavite();
+        }
+
+        // Bouton Triangulation (conditionnel)
+        if (manager.gestionConcavite && manager.ExisteFenetreConcave())
+        {
+            string txtTri = manager.afficherTriangulation ? "Cacher triangulation" : "Afficher fenetrage avec triangulation";
+            if (GUILayout.Button(txtTri))
+            {
+                manager.ToggleAfficherTriangulation();
+            }
+        }
+
+        GUILayout.Space(10);
         GUILayout.Label("Options : ");
 
         if (GUILayout.Button("Réinitialiser"))

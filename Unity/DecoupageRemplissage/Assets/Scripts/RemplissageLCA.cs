@@ -57,9 +57,40 @@ public class RemplissageLCA : MonoBehaviour
             for (int i = 0; i < nbPolygones; i++)
             {
                 Polygone poly = manager.listePolygones[i];
-                if (poly.sommetsDecoupes != null && poly.sommetsDecoupes.Count >= 3)
+                if (poly.resultatsDecoupes != null && poly.resultatsDecoupes.Count > 0)
                 {
-                    RemplirPolygone(meshFilters[i], poly.sommetsDecoupes);
+                    // Pour l'instant on ne gère que le premier résultat pour le remplissage simple
+                    // Ou on merge tous les points (pas idéal pour disjoints)
+                    // IDEALEMENT: Il faudrait une liste de MeshFilters par polygone.
+                    // Pour simplifier ici et éviter de tout casser : on remplit le premier morceau valid.
+                    // OU MIEUX : on combine tout dans un seul Mesh (submeshes ou disjoint triangles).
+                    
+                    List<Vector2> allPoints = new List<Vector2>();
+                    List<int> allTriangles = new List<int>();
+                    int offset = 0;
+
+                    foreach(List<Point> piece in poly.resultatsDecoupes)
+                    {
+                        if(piece.Count < 3) continue;
+
+                        List<Vector2> pieceV2 = new List<Vector2>();
+                        foreach(Point p in piece) pieceV2.Add(new Vector2(p.x, p.y));
+
+                        List<int> tris = TriangulerLCA(pieceV2);
+                        
+                        foreach(int t in tris) allTriangles.Add(t + offset);
+                        allPoints.AddRange(pieceV2);
+                        offset += pieceV2.Count;
+                    }
+
+                    if(allPoints.Count > 0)
+                    {
+                        CreatesMesh(meshFilters[i], allPoints, allTriangles);
+                    }
+                    else
+                    {
+                        meshFilters[i].mesh = null;
+                    }
                 }
                 else
                 {
@@ -69,21 +100,13 @@ public class RemplissageLCA : MonoBehaviour
         }
     }
 
-    private void RemplirPolygone(MeshFilter mf, List<Point> points)
+    private void CreatesMesh(MeshFilter mf, List<Vector2> points, List<int> triangles)
     {
-        //convertir en Vector2
-        List<Vector2> poly = new List<Vector2>();
-        foreach (Point p in points)
-            poly.Add(new Vector2(p.x, p.y));
-
-        //triangulation LCA
-        List<int> triangles = TriangulerLCA(poly);
-
         //création mesh
         Mesh mesh = new Mesh();
         Vector3[] vertices = new Vector3[points.Count];
         for (int i = 0; i < points.Count; i++)
-            vertices[i] = points[i].VersVector3();
+            vertices[i] = new Vector3(points[i].x, points[i].y, 0);
 
         mesh.vertices = vertices;
         mesh.triangles = triangles.ToArray();

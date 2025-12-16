@@ -4,35 +4,32 @@ using System.Collections.Generic;
 public class Polygone
 {
     public List<Point> sommets;
-    public List<Point> sommetsDecoupes;
-    public LineRenderer lrContour;
-    public LineRenderer lrDecoupe;
+    public List<List<Point>> resultatsDecoupes; // Changé en liste de listes
     public bool estFerme;
     public Color couleur;
+
+    private LineRenderer lrContour;
+    private List<LineRenderer> lrDecoupes; // Liste de LineRenderers pour les résultats
+    private Transform transformParent;
 
     public Polygone()
     {
         sommets = new List<Point>();
-        sommetsDecoupes = new List<Point>();
+        resultatsDecoupes = new List<List<Point>>();
         estFerme = false;
         couleur = Color.green;
+        lrDecoupes = new List<LineRenderer>();
     }
 
     public void InitialiserLineRenderers()
     {
-        if (lrContour == null)
-        {
-            GameObject go = new GameObject("LR_Polygone_" + GetHashCode());
-            lrContour = go.AddComponent<LineRenderer>();
-            ConfigurerLR(lrContour, couleur, 0.05f);
-        }
+        GameObject goParent = new GameObject("Polygone_" + GetHashCode());
+        transformParent = goParent.transform;
 
-        if (lrDecoupe == null)
-        {
-            GameObject go = new GameObject("LR_Decoupe_" + GetHashCode());
-            lrDecoupe = go.AddComponent<LineRenderer>();
-            ConfigurerLR(lrDecoupe, Color.red, 0.1f);
-        }
+        GameObject goContour = new GameObject("LR_Contour");
+        goContour.transform.SetParent(transformParent);
+        lrContour = goContour.AddComponent<LineRenderer>();
+        ConfigurerLR(lrContour, couleur, 0.05f);
     }
 
     private void ConfigurerLR(LineRenderer lr, Color col, float width)
@@ -58,7 +55,33 @@ public class Polygone
     public void MettreAJourRenderers()
     {
         MettreAJourLR(lrContour, sommets, estFerme);
-        MettreAJourLR(lrDecoupe, sommetsDecoupes, true);
+        
+        // Gérer le pool de LineRenderers pour les résultats
+        int besoin = resultatsDecoupes.Count;
+        
+        // Créer des nouveaux si nécessaire
+        while (lrDecoupes.Count < besoin)
+        {
+            GameObject go = new GameObject("LR_Decoupe_" + lrDecoupes.Count);
+            go.transform.SetParent(transformParent);
+            LineRenderer lr = go.AddComponent<LineRenderer>();
+            ConfigurerLR(lr, Color.red, 0.1f);
+            lrDecoupes.Add(lr);
+        }
+
+        // Mettre à jour ceux utilisés
+        for (int i = 0; i < besoin; i++)
+        {
+            MettreAJourLR(lrDecoupes[i], resultatsDecoupes[i], true);
+            lrDecoupes[i].enabled = true;
+        }
+
+        // Cacher ceux inutilisés
+        for (int i = besoin; i < lrDecoupes.Count; i++)
+        {
+            lrDecoupes[i].positionCount = 0;
+            lrDecoupes[i].enabled = false;
+        }
     }
 
     private void MettreAJourLR(LineRenderer lr, List<Point> points, bool fermer)
@@ -78,6 +101,7 @@ public class Polygone
         }
     }
 
+    // Mise à jour de SetHighlight pour gérer la liste
     public void SetHighlight(bool highlight)
     {
         if (highlight)
@@ -88,11 +112,11 @@ public class Polygone
                 lrContour.startColor = Color.yellow;
                 lrContour.endColor = Color.yellow;
             }
-            if (lrDecoupe != null)
+            foreach(var lr in lrDecoupes)
             {
-                lrDecoupe.widthMultiplier = 0.2f;
-                lrDecoupe.startColor = Color.yellow;
-                lrDecoupe.endColor = Color.yellow;
+                lr.widthMultiplier = 0.2f;
+                lr.startColor = Color.yellow;
+                lr.endColor = Color.yellow;
             }
         }
         else
@@ -103,18 +127,17 @@ public class Polygone
                 lrContour.startColor = couleur;
                 lrContour.endColor = couleur;
             }
-            if (lrDecoupe != null)
+            foreach(var lr in lrDecoupes)
             {
-                lrDecoupe.widthMultiplier = 0.1f;
-                lrDecoupe.startColor = Color.red;
-                lrDecoupe.endColor = Color.red;
+                lr.widthMultiplier = 0.1f;
+                lr.startColor = Color.red;
+                lr.endColor = Color.red;
             }
         }
     }
 
     public void Detruire()
     {
-        if (lrContour != null) Object.Destroy(lrContour.gameObject);
-        if (lrDecoupe != null) Object.Destroy(lrDecoupe.gameObject);
+        if (transformParent != null) Object.Destroy(transformParent.gameObject);
     }
 }
