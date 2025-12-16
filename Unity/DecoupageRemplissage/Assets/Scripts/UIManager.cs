@@ -3,9 +3,9 @@ using UnityEngine;
 public class UIManager : MonoBehaviour
 {
     private FenetrageManager manager;
-    private Rect windowRect = new Rect(10, 10, 200, 300);
-    private float uiScale = 2.5f;
-
+    [SerializeField]
+    private Rect windowRect = new Rect(10, 10, 200, 300); private float uiScale = 2.5f;
+    private Vector2 scrollPos;
     private void Start()
     {
         manager = FindFirstObjectByType<FenetrageManager>();
@@ -19,7 +19,7 @@ public class UIManager : MonoBehaviour
         GUI.Box(windowRect, "Menu");
 
         GUILayout.BeginArea(new Rect(windowRect.x + 10, windowRect.y + 30, windowRect.width - 20, windowRect.height - 40));
-
+        scrollPos = GUILayout.BeginScrollView(scrollPos);
         GUILayout.Label("Actions : ");
 
         if (GUILayout.Button("Nouveau Polygone"))
@@ -64,7 +64,8 @@ public class UIManager : MonoBehaviour
         GUI.color = Color.red;
         GUILayout.Label("- Résultat (Rouge)");
         GUI.color = Color.white;
-        
+
+        GUILayout.EndScrollView();
         GUILayout.EndArea();
 
         GUI.matrix = oldMatrix;
