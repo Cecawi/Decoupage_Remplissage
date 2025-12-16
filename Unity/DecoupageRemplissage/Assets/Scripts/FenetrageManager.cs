@@ -6,55 +6,47 @@ public enum ModeApplication
     SaisiePolygone,
     SaisieFenetre,
     Edition,
+    SelectionSupprimer,
     Inactif
 }
 
 public class FenetrageManager : MonoBehaviour
 {
     public Camera cameraScene;
+    private UIManager uiManager;
 
-    public LineRenderer lrPolygone;
-    public LineRenderer lrFenetre;
-    public LineRenderer lrDecoupe;
-
-    public List<Point> pointsPolygone;
+    public List<Polygone> listePolygones;
+    private Polygone polygoneCourant;
+    
     public List<Point> pointsFenetre;
-    public List<Point> pointsDecoupes;
-
-    public bool polygoneFerme = false;
+    public LineRenderer lrFenetre;
     public bool fenetreFermee = false;
 
     public ModeApplication modeActuel = ModeApplication.SaisiePolygone;
     private Point pointSelectionne = null;
+    private Polygone polygoneSelectionne = null;
     private bool isDragging = false;
     private float rayonSelection = 0.5f;
 
     private void Awake()
     {
         if(cameraScene == null) cameraScene = Camera.main;
+        uiManager = FindFirstObjectByType<UIManager>();
 
-        pointsPolygone = new List<Point>();
+        listePolygones = new List<Polygone>();
         pointsFenetre = new List<Point>();
-        pointsDecoupes = new List<Point>();
 
-        InitialiserLineRenderers();
+        InitialiserLineRendererFenetre();
     }
 
-    private void InitialiserLineRenderers()
+    private void InitialiserLineRendererFenetre()
     {
-        if(lrPolygone == null) lrPolygone = CreateLR("LR_Polygone");
-        if(lrFenetre == null) lrFenetre = CreateLR("LR_Fenetre");
-        if(lrDecoupe == null) lrDecoupe = CreateLR("LR_Decoupe");
-
-        ConfigurerLineRenderer(lrDecoupe, Color.red, 0.1f);
-        ConfigurerLineRenderer(lrPolygone, Color.green, 0.05f);
-        ConfigurerLineRenderer(lrFenetre, Color.blue, 0.05f);
-    }
-
-    private LineRenderer CreateLR(string name)
-    {
-        GameObject go = new GameObject(name);
-        return go.AddComponent<LineRenderer>();
+        if(lrFenetre == null)
+        {
+            GameObject go = new GameObject("LR_Fenetre");
+            lrFenetre = go.AddComponent<LineRenderer>();
+            ConfigurerLineRenderer(lrFenetre, Color.blue, 0.05f);
+        }
     }
 
     private void ConfigurerLineRenderer(LineRenderer lr, Color couleur, float width)
@@ -65,6 +57,16 @@ public class FenetrageManager : MonoBehaviour
         lr.positionCount = 0;
         lr.startColor = couleur;
         lr.endColor = couleur;
+        
+        //ordre de rendu: vert=0, bleu=1, rouge=2
+        if (couleur == Color.blue)
+        {
+            lr.sortingOrder = 1;
+        }
+        else
+        {
+            lr.sortingOrder = 0;
+        }
     }
 
     private void Update()
@@ -76,23 +78,25 @@ public class FenetrageManager : MonoBehaviour
         switch (modeActuel)
         {
             case ModeApplication.SaisiePolygone:
-                GererSaisie(pointsPolygone, ref polygoneFerme, mousePos);
+                GererSaisiePolygone(mousePos);
                 break;
             case ModeApplication.SaisieFenetre:
-                GererSaisie(pointsFenetre, ref fenetreFermee, mousePos);
+                GererSaisieFenetre(mousePos);
                 break;
             case ModeApplication.Edition:
                 GererEdition(mousePos);
                 break;
+            case ModeApplication.SelectionSupprimer:
+                GererSelectionSupprimer(mousePos);
+                break;
         }
 
-        //mise à jour continue si on drag
         if (modeActuel == ModeApplication.Edition && isDragging)
         {
             RecalculerDecoupage();
         }
 
-        MettreAJourLineRenderers();
+        MettreAJourRenderers();
     }
 
     private Vector3 GetMousePosition()
@@ -102,40 +106,71 @@ public class FenetrageManager : MonoBehaviour
         return cameraScene.ScreenToWorldPoint(pos);
     }
 
-    private void GererSaisie(List<Point> liste, ref bool estFerme, Vector3 mousePos)
+    private void GererSaisiePolygone(Vector3 mousePos)
     {
-        if (estFerme) return;
-
-        if (Input.GetMouseButtonDown(0))
+        if (polygoneCourant == null || polygoneCourant.estFerme)
         {
-            liste.Add(new Point(mousePos));
+            polygoneCourant = new Polygone();
+            polygoneCourant.InitialiserLineRenderers();
+            listePolygones.Add(polygoneCourant);
         }
 
-        if (Input.GetKeyDown(KeyCode.Return) && liste.Count >= 3)
+        if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
         {
-            estFerme = true;
+            polygoneCourant.sommets.Add(new Point(mousePos));
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return) && polygoneCourant.sommets.Count >= 3)
+        {
+            polygoneCourant.estFerme = true;
+            RecalculerDecoupage();
+        }
+    }
+
+    private void GererSaisieFenetre(Vector3 mousePos)
+    {
+        if (fenetreFermee) return;
+
+        if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
+        {
+            pointsFenetre.Add(new Point(mousePos));
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return) && pointsFenetre.Count >= 3)
+        {
+            fenetreFermee = true;
             RecalculerDecoupage();
         }
     }
 
     private void GererEdition(Vector3 mousePos)
     {
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
         {
-            //cherche le point le plus proche dans Poly et Fenetre
-            Point pPoly = TrouverPointProche(pointsPolygone, mousePos);
-            Point pFen = TrouverPointProche(pointsFenetre, mousePos);
+            pointSelectionne = null;
+            float minDist = rayonSelection;
 
-            //priorité : si deux points sont proches, on prend le plus proche absolu
-            if (pPoly != null && pFen != null)
+            foreach (Polygone poly in listePolygones)
             {
-                float d1 = Vector3.Distance(pPoly.VersVector3(), mousePos);
-                float d2 = Vector3.Distance(pFen.VersVector3(), mousePos);
-                pointSelectionne = (d1 < d2) ? pPoly : pFen;
+                foreach (Point p in poly.sommets)
+                {
+                    float d = Vector3.Distance(p.VersVector3(), mousePos);
+                    if (d < minDist)
+                    {
+                        minDist = d;
+                        pointSelectionne = p;
+                    }
+                }
             }
-            else
+
+            Point pFen = TrouverPointProche(pointsFenetre, mousePos);
+            if (pFen != null)
             {
-                pointSelectionne = (pPoly != null) ? pPoly : pFen;
+                float d = Vector3.Distance(pFen.VersVector3(), mousePos);
+                if (d < minDist)
+                {
+                    pointSelectionne = pFen;
+                }
             }
 
             if (pointSelectionne != null)
@@ -155,6 +190,32 @@ public class FenetrageManager : MonoBehaviour
             pointSelectionne.x = mousePos.x;
             pointSelectionne.y = mousePos.y;
             pointSelectionne.z = mousePos.z;
+        }
+    }
+
+    private void GererSelectionSupprimer(Vector3 mousePos)
+    {
+        if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
+        {
+            Polygone ancienSelection = polygoneSelectionne;
+            polygoneSelectionne = null;
+            float minDist = float.MaxValue;
+
+            foreach (Polygone poly in listePolygones)
+            {
+                foreach (Point p in poly.sommets)
+                {
+                    float d = Vector3.Distance(p.VersVector3(), mousePos);
+                    if (d < minDist)
+                    {
+                        minDist = d;
+                        polygoneSelectionne = poly;
+                    }
+                }
+            }
+
+            if (ancienSelection != null) ancienSelection.SetHighlight(false);
+            if (polygoneSelectionne != null) polygoneSelectionne.SetHighlight(true);
         }
     }
 
@@ -178,22 +239,30 @@ public class FenetrageManager : MonoBehaviour
 
     public void RecalculerDecoupage()
     {
-        if (polygoneFerme && fenetreFermee && pointsPolygone.Count >= 3 && pointsFenetre.Count >= 3)
+        if (!fenetreFermee || pointsFenetre.Count < 3) return;
+
+        foreach (Polygone poly in listePolygones)
         {
-            DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(pointsFenetre, pointsPolygone);
-            pointsDecoupes = decoupage.Decouper();
-        }
-        else
-        {
-            pointsDecoupes.Clear();
+            if (poly.estFerme && poly.sommets.Count >= 3)
+            {
+                DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(pointsFenetre, poly.sommets);
+                poly.sommetsDecoupes = decoupage.Decouper();
+            }
+            else
+            {
+                poly.sommetsDecoupes.Clear();
+            }
         }
     }
 
-    private void MettreAJourLineRenderers()
+    private void MettreAJourRenderers()
     {
-        MettreAJourLineRenderer(lrPolygone, pointsPolygone, polygoneFerme);
+        foreach (Polygone poly in listePolygones)
+        {
+            poly.MettreAJourRenderers();
+        }
+
         MettreAJourLineRenderer(lrFenetre, pointsFenetre, fenetreFermee);
-        MettreAJourLineRenderer(lrDecoupe, pointsDecoupes, true);
     }
 
     private void MettreAJourLineRenderer(LineRenderer lr, List<Point> liste, bool fermer)
@@ -215,16 +284,79 @@ public class FenetrageManager : MonoBehaviour
 
     public void SetMode(ModeApplication nouveauMode)
     {
+        if (modeActuel == ModeApplication.SelectionSupprimer && polygoneSelectionne != null)
+        {
+            polygoneSelectionne.SetHighlight(false);
+            polygoneSelectionne = null;
+        }
+
         modeActuel = nouveauMode;
+    }
+
+    public void SupprimerPolygoneSelectionne()
+    {
+        if (polygoneSelectionne != null)
+        {
+            polygoneSelectionne.Detruire();
+            listePolygones.Remove(polygoneSelectionne);
+            polygoneSelectionne = null;
+            RecalculerDecoupage();
+        }
+    }
+
+    public bool APolygoneSelectionne()
+    {
+        return polygoneSelectionne != null;
+    }
+
+    public int NombrePolygones()
+    {
+        return listePolygones.Count;
     }
 
     public void ResetProjet()
     {
-        pointsPolygone.Clear();
+        foreach (Polygone poly in listePolygones)
+        {
+            poly.Detruire();
+        }
+        listePolygones.Clear();
+        polygoneCourant = null;
+        polygoneSelectionne = null;
+        
         pointsFenetre.Clear();
-        pointsDecoupes.Clear();
-        polygoneFerme = false;
         fenetreFermee = false;
         modeActuel = ModeApplication.SaisiePolygone;
+    }
+
+    public void NouveauPolygone()
+    {
+        if (polygoneCourant != null && !polygoneCourant.estFerme && polygoneCourant.sommets.Count >= 3)
+        {
+            polygoneCourant.estFerme = true;
+            RecalculerDecoupage();
+        }
+        modeActuel = ModeApplication.SaisiePolygone;
+    }
+
+    public void NouvelleFenetre()
+    {
+        if (polygoneCourant != null && !polygoneCourant.estFerme && polygoneCourant.sommets.Count >= 3)
+        {
+            polygoneCourant.estFerme = true;
+        }
+        
+        pointsFenetre.Clear();
+        fenetreFermee = false;
+        foreach (Polygone poly in listePolygones)
+        {
+            poly.sommetsDecoupes.Clear();
+        }
+        modeActuel = ModeApplication.SaisieFenetre;
+    }
+
+    private bool IsMouseOverUI()
+    {
+        return uiManager != null && uiManager.IsMouseOverUI();
     }
 }
