@@ -13,7 +13,7 @@ public class Remplissage : MonoBehaviour
     {
         if (manager == null)
         {
-            manager = FindObjectOfType<FenetrageManager>();
+            manager = FindFirstObjectByType<FenetrageManager>();
         }
 
         meshFilter = gameObject.GetComponent<MeshFilter>();

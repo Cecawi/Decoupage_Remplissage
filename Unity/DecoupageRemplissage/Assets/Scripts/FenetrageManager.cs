@@ -1,6 +1,14 @@
 using UnityEngine;
 using System.Collections.Generic;
 
+public enum ModeApplication
+{
+    SaisiePolygone,
+    SaisieFenetre,
+    Edition,
+    Inactif
+}
+
 public class FenetrageManager : MonoBehaviour
 {
     public Camera cameraScene;
@@ -13,16 +21,17 @@ public class FenetrageManager : MonoBehaviour
     public List<Point> pointsFenetre;
     public List<Point> pointsDecoupes;
 
-    public bool saisiePolygone = true;
     public bool polygoneFerme = false;
     public bool fenetreFermee = false;
 
+    public ModeApplication modeActuel = ModeApplication.SaisiePolygone;
+    private Point pointSelectionne = null;
+    private bool isDragging = false;
+    private float rayonSelection = 0.5f;
+
     private void Awake()
     {
-        if(cameraScene == null)
-        {
-            cameraScene = Camera.main;
-        }
+        if(cameraScene == null) cameraScene = Camera.main;
 
         pointsPolygone = new List<Point>();
         pointsFenetre = new List<Point>();
@@ -33,33 +42,25 @@ public class FenetrageManager : MonoBehaviour
 
     private void InitialiserLineRenderers()
     {
-        if(lrPolygone == null)
-        {
-            GameObject goPolygone = new GameObject("LR_Polygone");
-            lrPolygone = goPolygone.AddComponent<LineRenderer>();
-        }
+        if(lrPolygone == null) lrPolygone = CreateLR("LR_Polygone");
+        if(lrFenetre == null) lrFenetre = CreateLR("LR_Fenetre");
+        if(lrDecoupe == null) lrDecoupe = CreateLR("LR_Decoupe");
 
-        if(lrFenetre == null)
-        {
-            GameObject goFenetre = new GameObject("LR_Fenetre");
-            lrFenetre = goFenetre.AddComponent<LineRenderer>();
-        }
-
-        if(lrDecoupe == null)
-        {
-            GameObject goDecoupe = new GameObject("LR_Decoupe");
-            lrDecoupe = goDecoupe.AddComponent<LineRenderer>();
-        }
-
-        ConfigurerLineRenderer(lrDecoupe, Color.red);
-        ConfigurerLineRenderer(lrPolygone, Color.green);
-        ConfigurerLineRenderer(lrFenetre, Color.blue);
+        ConfigurerLineRenderer(lrDecoupe, Color.red, 0.1f);
+        ConfigurerLineRenderer(lrPolygone, Color.green, 0.05f);
+        ConfigurerLineRenderer(lrFenetre, Color.blue, 0.05f);
     }
 
-    private void ConfigurerLineRenderer(LineRenderer lr, Color couleur)
+    private LineRenderer CreateLR(string name)
+    {
+        GameObject go = new GameObject(name);
+        return go.AddComponent<LineRenderer>();
+    }
+
+    private void ConfigurerLineRenderer(LineRenderer lr, Color couleur, float width)
     {
         lr.material = new Material(Shader.Find("Sprites/Default"));
-        lr.widthMultiplier = 0.05f;
+        lr.widthMultiplier = width;
         lr.loop = false;
         lr.positionCount = 0;
         lr.startColor = couleur;
@@ -68,67 +69,123 @@ public class FenetrageManager : MonoBehaviour
 
     private void Update()
     {
-        GererChangementMode();
-        GererSaisiePoints();
-        GererValidationEtDecoupage();
+        if(Input.GetKeyDown(KeyCode.Escape)) ResetProjet();
+
+        Vector3 mousePos = GetMousePosition();
+
+        switch (modeActuel)
+        {
+            case ModeApplication.SaisiePolygone:
+                GererSaisie(pointsPolygone, ref polygoneFerme, mousePos);
+                break;
+            case ModeApplication.SaisieFenetre:
+                GererSaisie(pointsFenetre, ref fenetreFermee, mousePos);
+                break;
+            case ModeApplication.Edition:
+                GererEdition(mousePos);
+                break;
+        }
+
+        //mise à jour continue si on drag
+        if (modeActuel == ModeApplication.Edition && isDragging)
+        {
+            RecalculerDecoupage();
+        }
+
         MettreAJourLineRenderers();
     }
 
-    private void GererChangementMode()
+    private Vector3 GetMousePosition()
     {
-        if(Input.GetKeyDown(KeyCode.P))
+        Vector3 pos = Input.mousePosition;
+        pos.z = Mathf.Abs(cameraScene.transform.position.z);
+        return cameraScene.ScreenToWorldPoint(pos);
+    }
+
+    private void GererSaisie(List<Point> liste, ref bool estFerme, Vector3 mousePos)
+    {
+        if (estFerme) return;
+
+        if (Input.GetMouseButtonDown(0))
         {
-            saisiePolygone = true;
+            liste.Add(new Point(mousePos));
         }
 
-        if(Input.GetKeyDown(KeyCode.F))
+        if (Input.GetKeyDown(KeyCode.Return) && liste.Count >= 3)
         {
-            saisiePolygone = false;
+            estFerme = true;
+            RecalculerDecoupage();
         }
     }
 
-    private void GererSaisiePoints()
+    private void GererEdition(Vector3 mousePos)
     {
-        if(Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0))
         {
-            Vector3 pos = Input.mousePosition;
-            pos.z = Mathf.Abs(cameraScene.transform.position.z);
-            Vector3 monde = cameraScene.ScreenToWorldPoint(pos);
+            //cherche le point le plus proche dans Poly et Fenetre
+            Point pPoly = TrouverPointProche(pointsPolygone, mousePos);
+            Point pFen = TrouverPointProche(pointsFenetre, mousePos);
 
-            Point p = new Point(monde);
+            //priorité : si deux points sont proches, on prend le plus proche absolu
+            if (pPoly != null && pFen != null)
+            {
+                float d1 = Vector3.Distance(pPoly.VersVector3(), mousePos);
+                float d2 = Vector3.Distance(pFen.VersVector3(), mousePos);
+                pointSelectionne = (d1 < d2) ? pPoly : pFen;
+            }
+            else
+            {
+                pointSelectionne = (pPoly != null) ? pPoly : pFen;
+            }
 
-            if(saisiePolygone && !polygoneFerme)
+            if (pointSelectionne != null)
             {
-                pointsPolygone.Add(p);
+                isDragging = true;
             }
-            else if(!saisiePolygone && !fenetreFermee)
-            {
-                pointsFenetre.Add(p);
-            }
+        }
+
+        if (Input.GetMouseButtonUp(0))
+        {
+            isDragging = false;
+            pointSelectionne = null;
+        }
+
+        if (isDragging && pointSelectionne != null)
+        {
+            pointSelectionne.x = mousePos.x;
+            pointSelectionne.y = mousePos.y;
+            pointSelectionne.z = mousePos.z;
         }
     }
 
-    private void GererValidationEtDecoupage()
+    private Point TrouverPointProche(List<Point> liste, Vector3 target)
     {
-        if(Input.GetKeyDown(KeyCode.Return))
+        if (liste == null) return null;
+        Point best = null;
+        float minDist = rayonSelection;
+
+        foreach (Point p in liste)
         {
-            if(saisiePolygone && pointsPolygone.Count >= 3)
+            float d = Vector3.Distance(p.VersVector3(), target);
+            if (d < minDist)
             {
-                polygoneFerme = true;
-            }
-            else if(!saisiePolygone && pointsFenetre.Count >= 3)
-            {
-                fenetreFermee = true;
+                minDist = d;
+                best = p;
             }
         }
+        return best;
+    }
 
-        if(Input.GetKeyDown(KeyCode.Space))
+    public void RecalculerDecoupage()
+    {
+        if (polygoneFerme && fenetreFermee && pointsPolygone.Count >= 3 && pointsFenetre.Count >= 3)
         {
-            if(polygoneFerme && fenetreFermee && pointsPolygone.Count >= 3 && pointsFenetre.Count >= 3)
-            {
-                DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(pointsFenetre, pointsPolygone);
-                pointsDecoupes = decoupage.Decouper();
-            }
+            DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(pointsFenetre, pointsPolygone);
+            pointsDecoupes = decoupage.Decouper();
+        }
+        else
+        {
+            pointsDecoupes.Clear();
         }
     }
 
@@ -141,19 +198,33 @@ public class FenetrageManager : MonoBehaviour
 
     private void MettreAJourLineRenderer(LineRenderer lr, List<Point> liste, bool fermer)
     {
-        if(liste == null || liste.Count == 0)
+        if (liste == null || liste.Count == 0)
         {
             lr.positionCount = 0;
-            lr.loop = false;
             return;
         }
 
         lr.positionCount = liste.Count;
         lr.loop = fermer && liste.Count >= 3;
 
-        for(int i = 0 ; i < liste.Count ; i++)
+        for (int i = 0; i < liste.Count; i++)
         {
             lr.SetPosition(i, liste[i].VersVector3());
         }
+    }
+
+    public void SetMode(ModeApplication nouveauMode)
+    {
+        modeActuel = nouveauMode;
+    }
+
+    public void ResetProjet()
+    {
+        pointsPolygone.Clear();
+        pointsFenetre.Clear();
+        pointsDecoupes.Clear();
+        polygoneFerme = false;
+        fenetreFermee = false;
+        modeActuel = ModeApplication.SaisiePolygone;
     }
 }
