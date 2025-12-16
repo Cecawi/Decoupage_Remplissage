@@ -7,6 +7,7 @@ public enum ModeApplication
     SaisieFenetre,
     Edition,
     SelectionSupprimer,
+    SelectionSupprimerFenetre,
     Inactif
 }
 
@@ -18,13 +19,13 @@ public class FenetrageManager : MonoBehaviour
     public List<Polygone> listePolygones;
     private Polygone polygoneCourant;
     
-    public List<Point> pointsFenetre;
-    public LineRenderer lrFenetre;
-    public bool fenetreFermee = false;
+    public List<Fenetre> listeFenetres;
+    private Fenetre fenetreCourante;
 
     public ModeApplication modeActuel = ModeApplication.SaisiePolygone;
     private Point pointSelectionne = null;
     private Polygone polygoneSelectionne = null;
+    private Fenetre fenetreSelectionnee = null;
     private bool isDragging = false;
     private float rayonSelection = 0.5f;
 
@@ -34,40 +35,9 @@ public class FenetrageManager : MonoBehaviour
         uiManager = FindFirstObjectByType<UIManager>();
 
         listePolygones = new List<Polygone>();
-        pointsFenetre = new List<Point>();
-
-        InitialiserLineRendererFenetre();
+        listeFenetres = new List<Fenetre>();
     }
 
-    private void InitialiserLineRendererFenetre()
-    {
-        if(lrFenetre == null)
-        {
-            GameObject go = new GameObject("LR_Fenetre");
-            lrFenetre = go.AddComponent<LineRenderer>();
-            ConfigurerLineRenderer(lrFenetre, Color.blue, 0.05f);
-        }
-    }
-
-    private void ConfigurerLineRenderer(LineRenderer lr, Color couleur, float width)
-    {
-        lr.material = new Material(Shader.Find("Sprites/Default"));
-        lr.widthMultiplier = width;
-        lr.loop = false;
-        lr.positionCount = 0;
-        lr.startColor = couleur;
-        lr.endColor = couleur;
-        
-        //ordre de rendu: vert=0, bleu=1, rouge=2
-        if (couleur == Color.blue)
-        {
-            lr.sortingOrder = 1;
-        }
-        else
-        {
-            lr.sortingOrder = 0;
-        }
-    }
 
     private void Update()
     {
@@ -88,6 +58,9 @@ public class FenetrageManager : MonoBehaviour
                 break;
             case ModeApplication.SelectionSupprimer:
                 GererSelectionSupprimer(mousePos);
+                break;
+            case ModeApplication.SelectionSupprimerFenetre:
+                GererSelectionSupprimerFenetre(mousePos);
                 break;
         }
 
@@ -129,16 +102,21 @@ public class FenetrageManager : MonoBehaviour
 
     private void GererSaisieFenetre(Vector3 mousePos)
     {
-        if (fenetreFermee) return;
+        if (fenetreCourante == null || fenetreCourante.estFermee)
+        {
+            fenetreCourante = new Fenetre();
+            fenetreCourante.InitialiserLineRenderer();
+            listeFenetres.Add(fenetreCourante);
+        }
 
         if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
         {
-            pointsFenetre.Add(new Point(mousePos));
+            fenetreCourante.sommets.Add(new Point(mousePos));
         }
 
-        if (Input.GetKeyDown(KeyCode.Return) && pointsFenetre.Count >= 3)
+        if (Input.GetKeyDown(KeyCode.Return) && fenetreCourante.sommets.Count >= 3)
         {
-            fenetreFermee = true;
+            fenetreCourante.estFermee = true;
             RecalculerDecoupage();
         }
     }
@@ -163,13 +141,16 @@ public class FenetrageManager : MonoBehaviour
                 }
             }
 
-            Point pFen = TrouverPointProche(pointsFenetre, mousePos);
-            if (pFen != null)
+            foreach (Fenetre fen in listeFenetres)
             {
-                float d = Vector3.Distance(pFen.VersVector3(), mousePos);
-                if (d < minDist)
+                foreach(Point p in fen.sommets)
                 {
-                    pointSelectionne = pFen;
+                    float d = Vector3.Distance(p.VersVector3(), mousePos);
+                    if (d < minDist)
+                    {
+                        minDist = d;
+                        pointSelectionne = p;
+                    }
                 }
             }
 
@@ -219,6 +200,32 @@ public class FenetrageManager : MonoBehaviour
         }
     }
 
+    private void GererSelectionSupprimerFenetre(Vector3 mousePos)
+    {
+        if (Input.GetMouseButtonDown(0) && !IsMouseOverUI())
+        {
+            Fenetre ancienSelection = fenetreSelectionnee;
+            fenetreSelectionnee = null;
+            float minDist = float.MaxValue;
+
+            foreach (Fenetre fen in listeFenetres)
+            {
+                foreach (Point p in fen.sommets)
+                {
+                    float d = Vector3.Distance(p.VersVector3(), mousePos);
+                    if (d < minDist)
+                    {
+                        minDist = d;
+                        fenetreSelectionnee = fen;
+                    }
+                }
+            }
+
+            if (ancienSelection != null) ancienSelection.SetHighlight(false);
+            if (fenetreSelectionnee != null) fenetreSelectionnee.SetHighlight(true);
+        }
+    }
+
     private Point TrouverPointProche(List<Point> liste, Vector3 target)
     {
         if (liste == null) return null;
@@ -239,14 +246,42 @@ public class FenetrageManager : MonoBehaviour
 
     public void RecalculerDecoupage()
     {
-        if (!fenetreFermee || pointsFenetre.Count < 3) return;
+        //si aucune fenetre valide, pas de découpage
+        bool aucuneFenetreValide = true;
+        foreach (Fenetre fen in listeFenetres)
+        {
+            if (fen.estFermee && fen.sommets.Count >= 3)
+            {
+                aucuneFenetreValide = false;
+                break;
+            }
+        }
+
+        if (aucuneFenetreValide)
+        {
+            foreach (Polygone poly in listePolygones) poly.sommetsDecoupes.Clear();
+            return;
+        }
 
         foreach (Polygone poly in listePolygones)
         {
             if (poly.estFerme && poly.sommets.Count >= 3)
             {
-                DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(pointsFenetre, poly.sommets);
-                poly.sommetsDecoupes = decoupage.Decouper();
+                //commencer avec les sommets du polygone
+                List<Point> currentPoints = new List<Point>(poly.sommets);
+
+                //appliquer chaque fenetre séquentiellement
+                foreach (Fenetre fen in listeFenetres)
+                {
+                    if (fen.estFermee && fen.sommets.Count >= 3)
+                    {
+                        if (currentPoints.Count < 3) break; //plus rien à découper
+
+                        DecoupageSutherlandHodgman decoupage = new DecoupageSutherlandHodgman(fen.sommets, currentPoints);
+                        currentPoints = decoupage.Decouper();
+                    }
+                }
+                poly.sommetsDecoupes = currentPoints;
             }
             else
             {
@@ -262,25 +297,12 @@ public class FenetrageManager : MonoBehaviour
             poly.MettreAJourRenderers();
         }
 
-        MettreAJourLineRenderer(lrFenetre, pointsFenetre, fenetreFermee);
-    }
-
-    private void MettreAJourLineRenderer(LineRenderer lr, List<Point> liste, bool fermer)
-    {
-        if (liste == null || liste.Count == 0)
+        foreach (Fenetre fen in listeFenetres)
         {
-            lr.positionCount = 0;
-            return;
-        }
-
-        lr.positionCount = liste.Count;
-        lr.loop = fermer && liste.Count >= 3;
-
-        for (int i = 0; i < liste.Count; i++)
-        {
-            lr.SetPosition(i, liste[i].VersVector3());
+            fen.MettreAJourRenderer();
         }
     }
+
 
     public void SetMode(ModeApplication nouveauMode)
     {
@@ -314,21 +336,6 @@ public class FenetrageManager : MonoBehaviour
         return listePolygones.Count;
     }
 
-    public void ResetProjet()
-    {
-        foreach (Polygone poly in listePolygones)
-        {
-            poly.Detruire();
-        }
-        listePolygones.Clear();
-        polygoneCourant = null;
-        polygoneSelectionne = null;
-        
-        pointsFenetre.Clear();
-        fenetreFermee = false;
-        modeActuel = ModeApplication.SaisiePolygone;
-    }
-
     public void NouveauPolygone()
     {
         if (polygoneCourant != null && !polygoneCourant.estFerme && polygoneCourant.sommets.Count >= 3)
@@ -341,19 +348,59 @@ public class FenetrageManager : MonoBehaviour
 
     public void NouvelleFenetre()
     {
+        //auto-close polygon if open
         if (polygoneCourant != null && !polygoneCourant.estFerme && polygoneCourant.sommets.Count >= 3)
         {
             polygoneCourant.estFerme = true;
+            RecalculerDecoupage();
         }
-        
-        pointsFenetre.Clear();
-        fenetreFermee = false;
-        foreach (Polygone poly in listePolygones)
+
+        //auto-close current window if open
+        if (fenetreCourante != null && !fenetreCourante.estFermee && fenetreCourante.sommets.Count >= 3)
         {
-            poly.sommetsDecoupes.Clear();
+            fenetreCourante.estFermee = true;
+            RecalculerDecoupage();
         }
         modeActuel = ModeApplication.SaisieFenetre;
     }
+
+    public void SupprimerFenetreSelectionnee()
+    {
+        if (fenetreSelectionnee != null)
+        {
+            fenetreSelectionnee.Detruire();
+            listeFenetres.Remove(fenetreSelectionnee);
+            fenetreSelectionnee = null;
+            RecalculerDecoupage();
+        }
+    }
+
+    public bool AFenetreSelectionnee()
+    {
+        return fenetreSelectionnee != null;
+    }
+
+    public int NombreFenetres()
+    {
+        return listeFenetres.Count;
+    }
+
+    public void ResetProjet()
+    {
+        foreach (Polygone p in listePolygones) p.Detruire();
+        listePolygones.Clear();
+        polygoneCourant = null;
+        polygoneSelectionne = null;
+
+        foreach (Fenetre f in listeFenetres) f.Detruire();
+        listeFenetres.Clear();
+        fenetreCourante = null;
+        fenetreSelectionnee = null;
+
+        modeActuel = ModeApplication.SaisiePolygone;
+    }
+
+
 
     private bool IsMouseOverUI()
     {

@@ -85,6 +85,27 @@ public class UIManager : MonoBehaviour
             }
         }
 
+        if (manager.NombreFenetres() > 0)
+        {
+            bool enModeSelectionFen = manager.modeActuel == ModeApplication.SelectionSupprimerFenetre;
+            string texte = enModeSelectionFen && manager.AFenetreSelectionnee() 
+                ? "Supprimer la Fenêtre" 
+                : "Sélectionner Fenêtre à Supprimer";
+
+            if (GUILayout.Button(texte))
+            {
+                if (enModeSelectionFen && manager.AFenetreSelectionnee())
+                {
+                    manager.SupprimerFenetreSelectionnee();
+                    manager.SetMode(ModeApplication.Inactif);
+                }
+                else
+                {
+                    manager.SetMode(ModeApplication.SelectionSupprimerFenetre);
+                }
+            }
+        }
+
         GUILayout.Space(10);
         GUILayout.Label("Options : ");
 
