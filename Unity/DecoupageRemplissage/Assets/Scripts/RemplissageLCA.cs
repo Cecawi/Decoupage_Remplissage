@@ -1,22 +1,34 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 public class RemplissageLCA : MonoBehaviour
 {
     public FenetrageManager manager;
     public Material remplissageMaterial;
 
-    private List<MeshFilter> meshFilters;
-    private List<MeshRenderer> meshRenderers;
+    private List<MeshFilter> meshFilters = new List<MeshFilter>();
+    private List<MeshRenderer> meshRenderers = new List<MeshRenderer>();
+
+    //[cite_start]// Maillon pour la Liste des Côtés Actifs (LCA) [cite: 316, 319]
+    class Edge
+    {
+        public float yMax;    // Ordonnée maximale [cite: 321]
+        public float xCurr;   // Abscisse courante [cite: 322]
+        public float invM;    // 1/m [cite: 323]
+
+        public Edge(Vector2 p1, Vector2 p2)
+        {
+            if (p1.y > p2.y) { var tmp = p1; p1 = p2; p2 = tmp; }
+            yMax = p2.y;
+            xCurr = p1.x;
+            invM = (p2.x - p1.x) / (p2.y - p1.y);
+        }
+    }
 
     private void Awake()
     {
-        if (manager == null)
-            manager = FindFirstObjectByType<FenetrageManager>();
-
-        meshFilters = new List<MeshFilter>();
-        meshRenderers = new List<MeshRenderer>();
-
+        if (manager == null) manager = FindFirstObjectByType<FenetrageManager>();
         if (remplissageMaterial == null)
         {
             remplissageMaterial = new Material(Shader.Find("Sprites/Default"));
@@ -26,174 +38,122 @@ public class RemplissageLCA : MonoBehaviour
 
     private void Update()
     {
-        if (manager != null && manager.listePolygones != null)
+        if (manager == null || manager.listePolygones == null) return;
+
+        int nbPolygones = manager.listePolygones.Count;
+        AjusterPoolObjets(nbPolygones);
+
+        for (int i = 0; i < nbPolygones; i++)
         {
-            int nbPolygones = manager.listePolygones.Count;
-
-            while (meshFilters.Count < nbPolygones)
+            Polygone poly = manager.listePolygones[i];
+          //  [cite_start]// On traite tous les morceaux issus du découpage 
+            if (poly.resultatsDecoupes != null && poly.resultatsDecoupes.Count > 0)
             {
-                GameObject go = new GameObject("Remplissage_" + meshFilters.Count);
-                go.transform.SetParent(transform);
-                
-                MeshFilter mf = go.AddComponent<MeshFilter>();
-                MeshRenderer mr = go.AddComponent<MeshRenderer>();
-                mr.material = remplissageMaterial;
-
-                meshFilters.Add(mf);
-                meshRenderers.Add(mr);
+                GenererRemplissagePourPolygone(meshFilters[i], poly.resultatsDecoupes);
             }
-
-            while (meshFilters.Count > nbPolygones)
+            else
             {
-                int lastIdx = meshFilters.Count - 1;
-                if (meshFilters[lastIdx] != null)
-                {
-                    Destroy(meshFilters[lastIdx].gameObject);
-                }
-                meshFilters.RemoveAt(lastIdx);
-                meshRenderers.RemoveAt(lastIdx);
-            }
-
-            for (int i = 0; i < nbPolygones; i++)
-            {
-                Polygone poly = manager.listePolygones[i];
-                if (poly.resultatsDecoupes != null && poly.resultatsDecoupes.Count > 0)
-                {
-                    // Pour l'instant on ne gère que le premier résultat pour le remplissage simple
-                    // Ou on merge tous les points (pas idéal pour disjoints)
-                    // IDEALEMENT: Il faudrait une liste de MeshFilters par polygone.
-                    // Pour simplifier ici et éviter de tout casser : on remplit le premier morceau valid.
-                    // OU MIEUX : on combine tout dans un seul Mesh (submeshes ou disjoint triangles).
-                    
-                    List<Vector2> allPoints = new List<Vector2>();
-                    List<int> allTriangles = new List<int>();
-                    int offset = 0;
-
-                    foreach(List<Point> piece in poly.resultatsDecoupes)
-                    {
-                        if(piece.Count < 3) continue;
-
-                        List<Vector2> pieceV2 = new List<Vector2>();
-                        foreach(Point p in piece) pieceV2.Add(new Vector2(p.x, p.y));
-
-                        List<int> tris = TriangulerLCA(pieceV2);
-                        
-                        foreach(int t in tris) allTriangles.Add(t + offset);
-                        allPoints.AddRange(pieceV2);
-                        offset += pieceV2.Count;
-                    }
-
-                    if(allPoints.Count > 0)
-                    {
-                        CreatesMesh(meshFilters[i], allPoints, allTriangles);
-                    }
-                    else
-                    {
-                        meshFilters[i].mesh = null;
-                    }
-                }
-                else
-                {
-                    meshFilters[i].mesh = null;
-                }
+                meshFilters[i].mesh = null;
             }
         }
     }
 
-    private void CreatesMesh(MeshFilter mf, List<Vector2> points, List<int> triangles)
+    private void AjusterPoolObjets(int besoin)
     {
-        //création mesh
-        Mesh mesh = new Mesh();
-        Vector3[] vertices = new Vector3[points.Count];
-        for (int i = 0; i < points.Count; i++)
-            vertices[i] = new Vector3(points[i].x, points[i].y, 0);
+        while (meshFilters.Count < besoin)
+        {
+            GameObject go = new GameObject("Remplissage_LCA_" + meshFilters.Count);
+            go.transform.SetParent(transform);
+            meshFilters.Add(go.AddComponent<MeshFilter>());
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.material = remplissageMaterial;
+            meshRenderers.Add(mr);
+        }
+        while (meshFilters.Count > besoin)
+        {
+            int idx = meshFilters.Count - 1;
+            Destroy(meshFilters[idx].gameObject);
+            meshFilters.RemoveAt(idx);
+            meshRenderers.RemoveAt(idx);
+        }
+    }
 
-        mesh.vertices = vertices;
+    void GenererRemplissagePourPolygone(MeshFilter mf, List<List<Point>> morceaux)
+    {
+        List<Vector3> vertices = new List<Vector3>();
+        List<int> triangles = new List<int>();
+
+        foreach (var morceau in morceaux)
+        {
+            if (morceau.Count < 3) continue;
+            List<Vector2> points = morceau.Select(p => new Vector2(p.x, p.y)).ToList();
+            CalculerLCA(points, vertices, triangles);
+        }
+
+        Mesh mesh = new Mesh();
+        mesh.vertices = vertices.ToArray();
         mesh.triangles = triangles.ToArray();
         mesh.RecalculateNormals();
-
         mf.mesh = mesh;
     }
 
-    private List<int> TriangulerLCA(List<Vector2> polygon)
+    // [cite_start]// Algorithme LCA pur selon le cours [cite: 418, 427]
+
+    void CalculerLCA(List<Vector2> poly, List<Vector3> v, List<int> t)
     {
-        List<int> triangles = new List<int>();
-        
-        if (polygon.Count < 3) return triangles;
+        float yMin = poly.Min(p => p.y);
+        float yMax = poly.Max(p => p.y);
 
-        //algorithme LCA (winding number) simplifié
-        //pour l'instant on utilise ear clipping basique
-        List<Vector2> temp = new List<Vector2>(polygon);
-        
-        while (temp.Count > 3)
+        // RÉSOLUTON : Plus cette valeur est petite, plus c'est précis (0.1 = 10 lignes par unité)
+        float step = 0.05f;
+
+        Dictionary<float, List<Edge>> SI = new Dictionary<float, List<Edge>>();
+        for (int i = 0; i < poly.Count; i++)
         {
-            bool earFound = false;
-            for (int i = 0; i < temp.Count; i++)
+            Vector2 p1 = poly[i];
+            Vector2 p2 = poly[(i + 1) % poly.Count];
+            if (Mathf.Abs(p1.y - p2.y) > 0.001f)
             {
-                int prev = (i - 1 + temp.Count) % temp.Count;
-                int next = (i + 1) % temp.Count;
+                Edge e = new Edge(p1, p2);
+                // On cale le départ sur le multiple de 'step' le plus proche
+                float yStart = Mathf.Ceil(Mathf.Min(p1.y, p2.y) / step) * step;
+                if (!SI.ContainsKey(yStart)) SI[yStart] = new List<Edge>();
+                SI[yStart].Add(e);
+            }
+        }
 
-                if (EstConvexe(temp[prev], temp[i], temp[next]))
+        List<Edge> LCA = new List<Edge>();
+
+        for (float y = yMin; y <= yMax; y += step)
+        {
+            // On arrondit la clé pour éviter les erreurs de float
+            float key = Mathf.Round(y / step) * step;
+            if (SI.ContainsKey(key)) LCA.AddRange(SI[key]);
+
+            LCA.RemoveAll(e => e.yMax < y);
+
+            if (LCA.Count >= 2)
+            {
+                LCA.Sort((a, b) => a.xCurr.CompareTo(b.xCurr));
+
+                for (int i = 0; i < LCA.Count; i += 2)
                 {
-                    bool isEar = true;
-                    for (int j = 0; j < temp.Count; j++)
+                    if (i + 1 < LCA.Count)
                     {
-                        if (j == prev || j == i || j == next) continue;
-                        if (PointDansTriangle(temp[j], temp[prev], temp[i], temp[next]))
-                        {
-                            isEar = false;
-                            break;
-                        }
-                    }
+                        int idx = v.Count;
+                        // Les 4 sommets du maillage pour cette petite bande
+                        v.Add(new Vector3(LCA[i].xCurr, y, 0));
+                        v.Add(new Vector3(LCA[i + 1].xCurr, y, 0));
+                        v.Add(new Vector3(LCA[i + 1].xCurr, y + step, 0));
+                        v.Add(new Vector3(LCA[i].xCurr, y + step, 0));
 
-                    if (isEar)
-                    {
-                        int idx_prev = polygon.IndexOf(temp[prev]);
-                        int idx_i = polygon.IndexOf(temp[i]);
-                        int idx_next = polygon.IndexOf(temp[next]);
-
-                        triangles.Add(idx_prev);
-                        triangles.Add(idx_i);
-                        triangles.Add(idx_next);
-
-                        temp.RemoveAt(i);
-                        earFound = true;
-                        break;
+                        t.Add(idx); t.Add(idx + 2); t.Add(idx + 1);
+                        t.Add(idx); t.Add(idx + 3); t.Add(idx + 2);
                     }
                 }
             }
-            if (!earFound) break;
+            // Mise à jour : on ajoute (1/m * step) pour rester proportionnel à la résolution
+            foreach (var e in LCA) e.xCurr += e.invM * step;
         }
-
-        if (temp.Count == 3)
-        {
-            triangles.Add(polygon.IndexOf(temp[0]));
-            triangles.Add(polygon.IndexOf(temp[1]));
-            triangles.Add(polygon.IndexOf(temp[2]));
-        }
-
-        return triangles;
-    }
-
-    private bool EstConvexe(Vector2 a, Vector2 b, Vector2 c)
-    {
-        return ProduitVectoriel(a, b, c) > 0;
-    }
-
-    private float ProduitVectoriel(Vector2 a, Vector2 b, Vector2 c)
-    {
-        return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    }
-
-    private bool PointDansTriangle(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
-    {
-        float d1 = ProduitVectoriel(a, b, p);
-        float d2 = ProduitVectoriel(b, c, p);
-        float d3 = ProduitVectoriel(c, a, p);
-
-        bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-        bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
-
-        return !(hasNeg && hasPos);
     }
 }
